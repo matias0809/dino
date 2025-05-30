@@ -603,7 +603,7 @@ class MultiCropWrapper(nn.Module):
     def __init__(self, backbone, head):
         super(MultiCropWrapper, self).__init__()
         # disable layers dedicated to ImageNet labels classification
-        backbone.fc, backbone.head = nn.Identity(), nn.Identity()
+        #backbone.fc, backbone.head = nn.Identity(), nn.Identity()
         self.backbone = backbone
         self.head = head
 

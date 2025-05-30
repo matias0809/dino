@@ -34,6 +34,16 @@ import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
 
+#my imports
+from mmengine import Config
+
+from specdetr.specdetrwrapper import SpecDetrWrapper
+from specdetr.specdetr_custom_datamodules import SentinelPatchDataset
+from specdetr.specdetr_custom_datamodules import DataAugmentationSpecDetr
+
+from torchgeo.datasets import Sentinel2
+from torchgeo.samplers import GridGeoSampler
+
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
@@ -43,7 +53,7 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument('--arch', default='vit_small', type=str,
-        choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small'] \
+        choices=['vit_tiny', 'vit_small', 'vit_base', 'xcit', 'deit_tiny', 'deit_small', 'specdetr'] \
                 + torchvision_archs + torch.hub.list("facebookresearch/xcit:main"),
         help="""Name of architecture to train. For quick experiments with ViTs,
         we recommend using vit_tiny or vit_small.""")
@@ -125,7 +135,7 @@ def get_args_parser():
     parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
-    parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+    parser.add_argument("--local_rank", "--local-rank", dest="local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
     return parser
 
 
@@ -137,21 +147,55 @@ def train_dino(args):
     cudnn.benchmark = True
 
     # ============ preparing data ... ============
-    transform = DataAugmentationDINO(
-        args.global_crops_scale,
-        args.local_crops_scale,
-        args.local_crops_number,
+    if args.arch != 'specdetr':
+        transform = DataAugmentationDINO(
+            args.global_crops_scale,
+            args.local_crops_scale,
+            args.local_crops_number,
+        )
+        dataset = datasets.ImageFolder(args.data_path, transform=transform)
+        sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
+        data_loader = torch.utils.data.DataLoader(
+            dataset,
+            sampler=sampler,
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
     )
-    dataset = datasets.ImageFolder(args.data_path, transform=transform)
-    sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
-        sampler=sampler,
-        batch_size=args.batch_size_per_gpu,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        drop_last=True,
-    )
+
+    else:
+        transform = DataAugmentationSpecDetr(
+            args.global_crops_scale,
+            args.local_crops_scale,
+            args.local_crops_number,
+        )
+        dataset_raw = Sentinel2(
+            paths="/home/mnachour/master/dino/data", 
+            res=10,                    
+        )
+        geosampler = GridGeoSampler(
+            dataset=dataset_raw,
+            size=256,  
+            stride=256
+        )
+        patches = list(geosampler) 
+        dataset = SentinelPatchDataset(
+            base_dataset=dataset_raw,
+            index_list=patches,
+            transform=transform
+        )
+        sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
+        data_loader = torch.utils.data.DataLoader(
+            dataset,
+            sampler=sampler,
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True,
+        )
+
+
     print(f"Data loaded: there are {len(dataset)} images.")
 
     # ============ building student and teacher networks ... ============
@@ -165,6 +209,16 @@ def train_dino(args):
         )
         teacher = vits.__dict__[args.arch](patch_size=args.patch_size)
         embed_dim = student.embed_dim
+    # if the network is SpecDetr
+
+    elif args.arch == 'specdetr':
+        cfg = Config.fromfile("specdetr/specdetrconfig.py")
+        #cfg_encoder = cfg.encoder # "type" til denne dicten bør vel være "SpecDetrTransformerEncoder"
+        student = SpecDetrWrapper(**cfg['model']) # vet ikkke om dette funker ennå? Kan printe å se. Viktigste er at keys matcher
+        teacher = SpecDetrWrapper(**cfg['model'])
+        embed_dim = student.embed_dims
+ 
+
     # if the network is a XCiT
     elif args.arch in torch.hub.list("facebookresearch/xcit:main"):
         student = torch.hub.load('facebookresearch/xcit:main', args.arch,
@@ -267,7 +321,8 @@ def train_dino(args):
     start_time = time.time()
     print("Starting DINO training !")
     for epoch in range(start_epoch, args.epochs):
-        data_loader.sampler.set_epoch(epoch)
+        if isinstance(data_loader.sampler, torch.utils.data.DistributedSampler):
+            data_loader.sampler.set_epoch(epoch) 
 
         # ============ training one epoch of DINO ... ============
         train_stats = train_one_epoch(student, teacher, teacher_without_ddp, dino_loss,
@@ -315,10 +370,14 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         images = [im.cuda(non_blocking=True) for im in images]
         # teacher and student forward passes + compute dino loss
         with torch.cuda.amp.autocast(fp16_scaler is not None):
+            print(torch.cuda.memory_summary())
+            print("HI")
             teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
+            print("HI2")
             student_output = student(images)
+            print("HI3")
             loss = dino_loss(student_output, teacher_output, epoch)
-
+        
         if not math.isfinite(loss.item()):
             print("Loss is {}, stopping training".format(loss.item()), force=True)
             sys.exit(1)
@@ -462,6 +521,8 @@ class DataAugmentationDINO(object):
         for _ in range(self.local_crops_number):
             crops.append(self.local_transfo(image))
         return crops
+        
+
 
 
 if __name__ == '__main__':
