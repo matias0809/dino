@@ -38,7 +38,7 @@ from vision_transformer import DINOHead
 from mmengine import Config
 
 from specdetr.specdetrwrapper import SpecDetrWrapper
-from specdetr.specdetr_custom_datamodules import SentinelPatchDataset
+from specdetr.specdetr_custom_datamodules import PreloadedPatchDatasetv2
 from specdetr.specdetr_custom_datamodules import DataAugmentationSpecDetr
 
 from torchgeo.datasets import Sentinel2
@@ -170,21 +170,33 @@ def train_dino(args):
             args.local_crops_scale,
             args.local_crops_number,
         )
-        dataset_raw = Sentinel2(
-            paths="/home/mnachour/master/dino/data", 
-            res=10,                    
+        ###De 4 tingene under gjøres nå i load_patches_as_pt.py, og lagrer .pt filer i minne en gang
+        ###Problemet med denne koden under var at det var bottleneck å loade patches fra .jp2 filer under trening
+        """ dataset_raw = Sentinel2(
+            paths="/cluster/home/malovhoi/letmecooknow/dino/data",  # path to the folder with .SAFE files
+            res=10,
+            crs="EPSG:3857",  # bruker global crs. De re-projecter for oss!                
         )
         geosampler = GridGeoSampler(
             dataset=dataset_raw,
-            size=256,  
-            stride=256
-        )
+            size=336,  
+            stride=336,
+        ) 
         patches = list(geosampler) 
         dataset = SentinelPatchDataset(
             base_dataset=dataset_raw,
             index_list=patches,
-            transform=transform
-        )
+            #transform=transform
+        ) """ 
+
+        """ dataset = PreloadedPatchDataset(
+            args.data_path  
+        ) """ 
+
+        dataset = PreloadedPatchDatasetv2(
+            patch_dir=args.data_path,  # path to the folder with .pt files
+        ) 
+        
         sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
         data_loader = torch.utils.data.DataLoader(
             dataset,
@@ -327,7 +339,7 @@ def train_dino(args):
         # ============ training one epoch of DINO ... ============
         train_stats = train_one_epoch(student, teacher, teacher_without_ddp, dino_loss,
             data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
-            epoch, fp16_scaler, args)
+            epoch, fp16_scaler, args, transform)
 
         # ============ writing logs ... ============
         save_dict = {
@@ -355,7 +367,7 @@ def train_dino(args):
 
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader,
                     optimizer, lr_schedule, wd_schedule, momentum_schedule,epoch,
-                    fp16_scaler, args):
+                    fp16_scaler, args, transform=None):
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
     for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
@@ -367,21 +379,23 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
                 param_group["weight_decay"] = wd_schedule[it]
 
         # move images to gpu
-        images = [im.cuda(non_blocking=True) for im in images]
+        if isinstance(transform, DataAugmentationSpecDetr):
+            images = images.cuda(non_blocking=True)
+            images = transform(images) if transform is not None else images
+        else:
+            images = [im.cuda(non_blocking=True) for im in images]
         # teacher and student forward passes + compute dino loss
         with torch.cuda.amp.autocast(fp16_scaler is not None):
-            print(torch.cuda.memory_summary())
-            print("HI")
+            #print("HI1")
             teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
-            print("HI2")
+            #print("HI2")
             student_output = student(images)
-            print("HI3")
+            #print("HI3")
             loss = dino_loss(student_output, teacher_output, epoch)
-        
+            #print("HI4")
         if not math.isfinite(loss.item()):
             print("Loss is {}, stopping training".format(loss.item()), force=True)
             sys.exit(1)
-
         # student update
         optimizer.zero_grad()
         param_norms = None
@@ -394,20 +408,31 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             optimizer.step()
         else:
             fp16_scaler.scale(loss).backward()
+            """ threshold = 10
+            for name, p in student.named_parameters():
+                if p.grad is not None and torch.isinf(p.grad).any():
+                    print(f"⚠️ Gradient is inf in parameter: {name}")
+                elif p.grad is not None:
+                    grad_norm = p.grad.data.norm(2).item()
+                    if grad_norm > threshold:
+                        print(f"⚠️ Gradient norm {grad_norm:.2f} exceeds {threshold} for parameter: {name}") """
+
             if args.clip_grad:
                 fp16_scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                #print("before")
                 param_norms = utils.clip_gradients(student, args.clip_grad)
+                #print("after")
+                max_grad_norm = max(param_norms) if param_norms else 0.0
+                print(f"[Epoch {epoch}] Max grad norm: {max_grad_norm:.2f}") ###JEG SOM SJEKKER MAX GRAD -> inf er DÅRLIG
             utils.cancel_gradients_last_layer(epoch, student,
                                               args.freeze_last_layer)
             fp16_scaler.step(optimizer)
             fp16_scaler.update()
-
         # EMA update for the teacher
         with torch.no_grad():
             m = momentum_schedule[it]  # momentum parameter
             for param_q, param_k in zip(student.module.parameters(), teacher_without_ddp.parameters()):
                 param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
-
         # logging
         torch.cuda.synchronize()
         metric_logger.update(loss=loss.item())
@@ -487,7 +512,7 @@ class DataAugmentationDINO(object):
         ])
         normalize = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)), #Må kommenteres ut når vi plotter eksempel RGB fra .pt filene
         ])
 
         # first global crop

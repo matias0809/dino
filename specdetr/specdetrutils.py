@@ -890,13 +890,34 @@ class MSIBrightnessContrast(nn.Module):
 
     def forward(self, x):
         # x: (B, C, H, W)
+        """  THIS WAS THE OLD VERSION, WHEN DataAugmentationSpecDetr EXPECTED SINGLE IMAGE INPUTS!
+            NOW IT IS PR IMAGE RANDOMNESS!
         if torch.rand(1).item() < self.p_brightness:
             scale = 1.0 + torch.empty(x.size(0), 1, 1, 1).uniform_(-self.brightness, self.brightness).to(x.device)
             x = x * scale
 
-        if torch.rand(1).item() < self.p_contrast:
+       if torch.rand(1).item() < self.p_contrast:
+           mean = x.mean(dim=(2, 3), keepdim=True)
+           alpha = 1.0 + torch.empty(x.size(0), 1, 1, 1).uniform_(-self.contrast, self.contrast).to(x.device)
+           x = (x - mean) * alpha + mean
+ 
+        return x """
+        B, C, H, W = x.shape
+
+        # Brightness (per image)
+        if self.p_brightness > 0:
+            apply_brightness = torch.rand(B, 1, 1, 1, device=x.device) < self.p_brightness
+            scale = 1.0 + torch.empty(B, 1, 1, 1, device=x.device).uniform_(-self.brightness, self.brightness)
+            x = torch.where(apply_brightness, x * scale, x)
+
+        # Contrast (per image)
+        if self.p_contrast > 0:
+            apply_contrast = torch.rand(B, 1, 1, 1, device=x.device) < self.p_contrast
             mean = x.mean(dim=(2, 3), keepdim=True)
-            alpha = 1.0 + torch.empty(x.size(0), 1, 1, 1).uniform_(-self.contrast, self.contrast).to(x.device)
-            x = (x - mean) * alpha + mean
+            alpha = 1.0 + torch.empty(B, 1, 1, 1, device=x.device).uniform_(-self.contrast, self.contrast)
+            x = torch.where(apply_contrast, (x - mean) * alpha + mean, x)
 
         return x
+    
+       
+

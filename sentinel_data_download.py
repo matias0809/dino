@@ -3,6 +3,7 @@
 
 from eodag import EODataAccessGateway
 import os
+import pandas as pd
 
 # Register at Copernicus Dataspace to get credentials:
 # https://documentation.dataspace.copernicus.eu/APIs/SentinelHub/Overview/Authentication.html#registering-oauth-client
@@ -12,8 +13,13 @@ import os
 # https://eodag.readthedocs.io/en/latest/getting_started_guide/configure.html#configure-eodag
 
 
-output_path = "/home/mnachour/master/dino/data"
-os.makedirs(output_path, exist_ok=True)  # create it if it doesn't exist
+df = pd.read_csv("/cluster/home/malovhoi/letmecooknow/dino/data/s2_products_global_100.csv")
+product_ids = df["product_id"].tolist()
+
+
+output_path_ies = "/home/mnachour/master/dino/data"
+output_path_idun = "/cluster/home/malovhoi/letmecooknow/dino/data/single_img" #HAR IKKE NOE Å SI, OPPDATER CONFIG!!
+os.makedirs(output_path_idun, exist_ok=True)  # create it if it doesn't exist
 
 # Initialize EODAG
 dag = EODataAccessGateway()
@@ -21,8 +27,9 @@ dag.set_preferred_provider("cop_dataspace")
 
 # You will get a huge list from us
 product_ids = [
-    'S2A_MSIL1C_20230306T104921_N0510_R051_T32VLK_20240820T000248'
-]
+    #'S2A_MSIL1C_20230306T104921_N0510_R051_T32VLK_20240820T000248'
+    'S2A_MSIL1C_20230728T102601_N0509_R108_T31TGH_20230728T154909'
+] 
 
 for product_id in product_ids:
     # Define search parameters
@@ -34,7 +41,7 @@ for product_id in product_ids:
 
     # Download products
     #search_results[0].download(output="./data")
-    product_path = search_results[0].download(output=output_path)
+    product_path = search_results[0].download(output=output_path_idun)
     print(f"Downloaded product saved at: {product_path}")
 
 # Some images might be "offline", meaning they are moved to cold storage

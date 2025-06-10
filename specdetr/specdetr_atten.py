@@ -213,6 +213,7 @@ class MultiScaleDeformableAttention_1(nn.Module):
         if embed_dims % num_heads != 0:
             raise ValueError(f'embed_dims must be divisible by num_heads, '
                              f'but got {embed_dims} and {num_heads}')
+        print("EMBEDDED DIMENSIONS: ", embed_dims)
         dim_per_head = embed_dims // num_heads
         self.norm_cfg = norm_cfg
         self.dropout = nn.Dropout(dropout)

@@ -1,2 +1,4 @@
-outputs/dino_outputs/
-data
+outputs/
+data_safe/
+data_pt_336/
+data_extra/

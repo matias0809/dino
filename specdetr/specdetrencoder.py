@@ -94,7 +94,7 @@ class SpecDetrTransformerEncoder(nn.Module):
                 valid_ratios=valid_ratios,
                 reference_points=reference_points,
                 **kwargs)
-            print("Ran a layer!")
+            #print("Ran a layer!")
             # if self.save_id in [5,50,100,150,200,250,300,350,400,450]:
             #     np.save('/media/ubuntu/data/my_HTD_dataset/paper_fig/feat_map1/f'+str(i+1)+'_'+'{:03d}'.format(self.save_id), query[:,:-1].view(128,128,256).detach().cpu().numpy())
             #     np.save(

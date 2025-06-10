@@ -1,7 +1,7 @@
 norm = 'LN'  #'IN1d' 'LN''BN1d'
 num_levels = 2
 in_channels = 13 #ENDRE TIL MSI
-embed_dims = 64  # embed_dims256 SKAL DETTE VÆRE SÅNN??
+embed_dims = 128  # embed_dims256 SKAL DETTE VÆRE SÅNN??
 model = dict(
     num_feature_levels=num_levels,
     # dn_only_pos = False,
@@ -12,7 +12,7 @@ model = dict(
         # in FPN, otherwise some parameter will not be used
         num_levels=num_levels,
         norm_cfg=dict(type=norm),
-        token_masking=True,  # True for DeformDETR
+        token_masking=True,  
     ),
     encoder=dict(
         num_layers=6,

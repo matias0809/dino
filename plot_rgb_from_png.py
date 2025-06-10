@@ -28,7 +28,8 @@ def process_png_with_dino_transform(image_path, transform, output_dir):
     if isinstance(transform, DataAugmentationDINO):
         crops = transform(pil_img)
     if isinstance(transform, DataAugmentationSpecDetr):
-        crops = transform(rgb_tensor*10000) #Because we divide by 10000 inside the transform for .SAFE files!
+        ###TODO Denne ble laget da vi sendte inn enkelt-bilder. Nå sender vi batches, så kanskje vi må squeeze
+        crops = transform(rgb_tensor) #REMEMBER TO CHECK IF WE DIVIDE BY 10000 IN DataAugmentationSpecDetr! SHOULD NOT BE DIVIDING!
 
 
     # Save RGB channels from each crop
