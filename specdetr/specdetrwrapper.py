@@ -189,6 +189,7 @@ class SpecDetrWrapper(nn.Module): #Bruke BaseModule eller nn.Module??
             spatial_shapes.prod(1).cumsum(0)[:-1]))
         valid_ratios = torch.stack(  # (bs, num_level, 2)
             [self.get_valid_ratio(m) for m in mlvl_masks], 1)
+        
 
         encoder_inputs_dict = dict(
             feat=feat_flatten,

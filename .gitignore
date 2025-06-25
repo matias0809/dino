@@ -2,3 +2,6 @@ outputs/
 data_safe/
 data_pt_336/
 data_extra/
+data_finetune/
+data_handling/
+predictions.json
